@@ -1,150 +1,211 @@
 import { useState } from 'react';
-import { ShieldCheck, Zap, Building2, UserCircle } from 'lucide-react';
+import { ShieldCheck, Zap, RefreshCw, AlertTriangle, X } from 'lucide-react';
 import { useWeb3 } from '../lib/Web3Context';
+import { ethers } from 'ethers';
+import { ADDRESSES, AAVE_POOL_ABI, ERC20_ABI, SUPPORTED_CHAINS } from '../lib/contracts';
 
 export default function Borrow() {
-  const [borrowAmount, setBorrowAmount] = useState('');
-  const [collateralType, setCollateralType] = useState('crypto');
-  const { address, provider } = useWeb3();
+  const [amount, setAmount] = useState('');
+  const [actionType, setActionType] = useState<'supply' | 'borrow'>('supply');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const { address, provider, chainId, switchNetwork } = useWeb3();
+  
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  const handleBorrow = async () => {
+  const handleAction = async () => {
     if (!provider || !address) {
-      alert('Please connect your wallet first.');
+      setErrorMessage('Please connect your wallet first.');
+      setShowErrorModal(true);
       return;
     }
-    if (!borrowAmount || parseFloat(borrowAmount) <= 0) {
-      alert('Please enter a valid amount.');
+    if (chainId !== SUPPORTED_CHAINS.BASE_SEPOLIA) {
+      setErrorMessage('Please switch to Base Sepolia testnet to use Aave V3.');
+      setShowErrorModal(true);
+      return;
+    }
+    if (!amount || parseFloat(amount) <= 0) {
+      setErrorMessage('Please enter a valid amount.');
+      setShowErrorModal(true);
       return;
     }
     
+    setIsProcessing(true);
     try {
       const signer = await provider.getSigner();
-      // Sending a 0 value transaction to self to simulate depositing collateral
-      const tx = await signer.sendTransaction({
-        to: address,
-        value: 0,
-        data: '0x' // Empty data for simulation
-      });
-      alert(`Collateral deposited & Loan issued! Hash: ${tx.hash}`);
+      const poolContract = new ethers.Contract(ADDRESSES.BASE_SEPOLIA.AAVE_POOL, AAVE_POOL_ABI, signer);
+      const usdcContract = new ethers.Contract(ADDRESSES.BASE_SEPOLIA.USDC, ERC20_ABI, signer);
+      
+      const parsedAmount = ethers.parseUnits(amount, 6); // USDC has 6 decimals
+      
+      if (actionType === 'supply') {
+        // 1. Check Allowance
+        const allowance = await usdcContract.allowance(address, ADDRESSES.BASE_SEPOLIA.AAVE_POOL);
+        if (allowance < parsedAmount) {
+          const approveTx = await usdcContract.approve(ADDRESSES.BASE_SEPOLIA.AAVE_POOL, ethers.MaxUint256);
+          await approveTx.wait();
+        }
+        
+        // 2. Supply
+        const tx = await poolContract.supply(
+          ADDRESSES.BASE_SEPOLIA.USDC,
+          parsedAmount,
+          address,
+          0
+        );
+        await tx.wait();
+        alert(`Successfully supplied ${amount} USDC to Aave V3! Hash: ${tx.hash}`);
+      } else {
+        // Borrow
+        // interestRateMode: 2 for Variable
+        const tx = await poolContract.borrow(
+          ADDRESSES.BASE_SEPOLIA.USDC,
+          parsedAmount,
+          2,
+          0,
+          address
+        );
+        await tx.wait();
+        alert(`Successfully borrowed ${amount} USDC from Aave V3! Hash: ${tx.hash}`);
+      }
+      
+      setAmount('');
     } catch (error: any) {
       console.error(error);
-      alert(`Transaction failed: ${error.message}`);
+      let msg = error.message || 'Transaction failed';
+      if (error.code === 'ACTION_REJECTED') msg = 'User rejected the transaction.';
+      else if (error.message.includes('revert')) msg = 'Transaction reverted by Aave. Check your health factor and collateral.';
+      setErrorMessage(msg);
+      setShowErrorModal(true);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-4xl relative">
+      {showErrorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-3xl border border-red-500/20 bg-[#13131a] p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <AlertTriangle className="h-6 w-6 text-red-500" /> Error
+              </h3>
+              <button onClick={() => setShowErrorModal(false)} className="text-slate-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-slate-300 text-sm mb-6">{errorMessage}</p>
+            <button 
+              onClick={() => setShowErrorModal(false)}
+              className="w-full rounded-xl bg-red-500/20 border border-red-500/30 py-3 font-bold text-red-400 hover:bg-red-500/30 transition-all"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="mb-8 text-center">
-        <h2 className="text-3xl font-bold text-white">Sovereign Lending</h2>
-        <p className="mt-2 text-slate-400">Borrow up to Billions instantly using your digital assets (NFTs, Tokens, Real World Assets).</p>
+        <h2 className="text-3xl font-bold text-white">Aave V3 Lending</h2>
+        <p className="mt-2 text-slate-400">Supply USDC as collateral and borrow against it directly on-chain.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-        {/* Borrow Form */}
+        {/* Action Form */}
         <div className="rounded-3xl border border-white/10 bg-[#13131a] p-6 shadow-2xl">
-          <h3 className="mb-6 text-xl font-semibold text-white">Request Instant Loan</h3>
+          <h3 className="mb-6 text-xl font-semibold text-white">DeFi Money Market</h3>
           
           <div className="space-y-6">
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-400">Borrow Amount (USD)</label>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-slate-400">$</span>
-                <input 
-                  type="number" 
-                  placeholder="1,000,000"
-                  value={borrowAmount}
-                  onChange={(e) => setBorrowAmount(e.target.value)}
-                  className="w-full rounded-xl border border-white/10 bg-[#1c1c24] py-4 pl-10 pr-4 text-2xl font-bold text-white outline-none focus:border-indigo-500"
-                />
+              <label className="mb-2 block text-sm font-medium text-slate-400">Action</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  onClick={() => setActionType('supply')}
+                  disabled={isProcessing}
+                  className={`rounded-xl border p-3 text-center transition-all ${actionType === 'supply' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'} disabled:opacity-50`}
+                >
+                  Supply USDC
+                </button>
+                <button 
+                  onClick={() => setActionType('borrow')}
+                  disabled={isProcessing}
+                  className={`rounded-xl border p-3 text-center transition-all ${actionType === 'borrow' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'} disabled:opacity-50`}
+                >
+                  Borrow USDC
+                </button>
               </div>
-              <p className="mt-2 text-xs text-emerald-400">Liquidity Available: $452.8B</p>
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-400">Collateral Type</label>
-              <div className="grid grid-cols-2 gap-3">
-                <button 
-                  onClick={() => setCollateralType('crypto')}
-                  className={`rounded-xl border p-3 text-center transition-all ${collateralType === 'crypto' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'}`}
-                >
-                  Crypto / Tokens
-                </button>
-                <button 
-                  onClick={() => setCollateralType('nft')}
-                  className={`rounded-xl border p-3 text-center transition-all ${collateralType === 'nft' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'}`}
-                >
-                  High-Value NFTs
-                </button>
-                <button 
-                  onClick={() => setCollateralType('rwa')}
-                  className={`col-span-2 rounded-xl border p-3 text-center transition-all ${collateralType === 'rwa' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'}`}
-                >
-                  Tokenized Real World Assets (Real Estate, Bonds)
-                </button>
+              <label className="mb-2 block text-sm font-medium text-slate-400">Amount (USDC)</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">$</span>
+                <input 
+                  type="number" 
+                  placeholder="100"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  disabled={isProcessing}
+                  className="w-full rounded-xl border border-white/10 bg-[#1c1c24] py-4 pl-10 pr-4 text-2xl font-bold text-white outline-none focus:border-indigo-500 disabled:opacity-50"
+                />
               </div>
             </div>
 
             <div className="rounded-xl bg-indigo-500/10 p-4 border border-indigo-500/20">
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-slate-400">Interest Rate (APR)</span>
-                <span className="font-bold text-emerald-400">0.5% Fixed</span>
+                <span className="text-slate-400">Protocol</span>
+                <span className="font-bold text-emerald-400">Aave V3</span>
               </div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-slate-400">LTV Ratio</span>
-                <span className="font-bold text-white">Up to 95%</span>
+                <span className="text-slate-400">Network</span>
+                <span className="font-bold text-white">Base Sepolia</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Approval Time</span>
-                <span className="font-bold text-white flex items-center gap-1"><Zap className="h-3 w-3 text-amber-400"/> Instant</span>
+                <span className="text-slate-400">Execution</span>
+                <span className="font-bold text-white flex items-center gap-1"><Zap className="h-3 w-3 text-amber-400"/> Direct Smart Contract</span>
               </div>
             </div>
 
-            <button 
-              onClick={handleBorrow}
-              className="w-full rounded-xl bg-indigo-600 py-4 text-lg font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-700 transition-all"
-            >
-              {address ? 'Deposit Collateral & Borrow' : 'Connect Wallet to Borrow'}
-            </button>
+            {chainId !== SUPPORTED_CHAINS.BASE_SEPOLIA ? (
+              <button 
+                onClick={() => switchNetwork(SUPPORTED_CHAINS.BASE_SEPOLIA)}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-600 py-4 text-lg font-bold text-white shadow-lg hover:bg-amber-700 transition-all"
+              >
+                Switch to Base Sepolia
+              </button>
+            ) : (
+              <button 
+                onClick={handleAction}
+                disabled={isProcessing || !amount}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 py-4 text-lg font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isProcessing ? (
+                  <><RefreshCw className="h-5 w-5 animate-spin" /> Processing on Chain...</>
+                ) : (
+                  address ? (actionType === 'supply' ? 'Approve & Supply' : 'Borrow') : 'Connect Wallet'
+                )}
+              </button>
+            )}
           </div>
         </div>
 
         {/* Info & Stats */}
         <div className="space-y-6">
-          <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-[#13131a] to-[#1c1c24] p-6">
-            <h3 className="mb-4 text-lg font-semibold text-white">Who is borrowing?</h3>
-            <div className="space-y-4">
-              <div className="flex items-center gap-4">
-                <div className="rounded-full bg-blue-500/20 p-3 text-blue-400"><Building2 className="h-6 w-6" /></div>
-                <div>
-                  <p className="font-medium text-white">Governments & Institutions</p>
-                  <p className="text-sm text-slate-400">Borrowing billions for infrastructure using sovereign bonds.</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="rounded-full bg-purple-500/20 p-3 text-purple-400"><Building2 className="h-6 w-6" /></div>
-                <div>
-                  <p className="font-medium text-white">Corporations</p>
-                  <p className="text-sm text-slate-400">Instant liquidity for payroll and expansion.</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="rounded-full bg-emerald-500/20 p-3 text-emerald-400"><UserCircle className="h-6 w-6" /></div>
-                <div>
-                  <p className="font-medium text-white">Individuals</p>
-                  <p className="text-sm text-slate-400">Personal loans against crypto portfolios and NFTs.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div className="rounded-3xl border border-white/10 bg-[#13131a] p-6">
             <div className="flex items-center gap-3 mb-4">
               <ShieldCheck className="h-6 w-6 text-emerald-400" />
-              <h3 className="text-lg font-semibold text-white">Axiom Security Guarantee</h3>
+              <h3 className="text-lg font-semibold text-white">Real DeFi Integration</h3>
             </div>
-            <p className="text-sm text-slate-400 leading-relaxed">
-              All collateral is secured by multi-signature, institutional-grade cold storage distributed across 50 global nodes. Smart contracts are audited by top 10 security firms.
+            <p className="text-sm text-slate-400 leading-relaxed mb-4">
+              This interface interacts directly with the official Aave V3 smart contracts on the Base Sepolia testnet.
             </p>
+            <ul className="space-y-2 text-sm text-slate-400 list-disc list-inside">
+              <li>No simulated transactions.</li>
+              <li>Requires real testnet ETH for gas.</li>
+              <li>Requires real testnet USDC.</li>
+              <li>Subject to Aave's collateralization ratios and health factor requirements.</li>
+            </ul>
           </div>
         </div>
       </div>

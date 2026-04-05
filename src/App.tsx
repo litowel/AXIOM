@@ -5,30 +5,41 @@ import {
   Landmark, 
   Coins, 
   Droplets, 
-  Cpu,
   Wallet,
   Globe,
   Menu,
   X,
   ChevronRight,
-  Zap
+  Zap,
+  Copy,
+  LogOut,
+  Check
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { useWeb3 } from './lib/Web3Context';
+import { SUPPORTED_CHAINS } from './lib/contracts';
 import Dashboard from './views/Dashboard';
 import Dex from './views/Dex';
 import Borrow from './views/Borrow';
 import TokenStudio from './views/TokenStudio';
 import Faucet from './views/Faucet';
-import AppBuilder from './views/AppBuilder';
 import Flashloan from './views/Flashloan';
 
-type View = 'dashboard' | 'dex' | 'borrow' | 'token-studio' | 'faucet' | 'app-builder' | 'flashloan';
+type View = 'dashboard' | 'dex' | 'borrow' | 'token-studio' | 'faucet' | 'flashloan';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const { address, connect } = useWeb3();
+  const [copied, setCopied] = useState(false);
+  const { address, connect, disconnect, chainId, switchNetwork } = useWeb3();
+
+  const handleCopyAddress = () => {
+    if (address) {
+      navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const navigation = [
     { name: 'Global Dashboard', id: 'dashboard', icon: LayoutDashboard },
@@ -37,7 +48,6 @@ export default function App() {
     { name: 'Flashloan Bot', id: 'flashloan', icon: Zap },
     { name: 'Token Studio', id: 'token-studio', icon: Coins },
     { name: 'Testnet Faucet', id: 'faucet', icon: Droplets },
-    { name: 'Axiom Forge (AI Builder)', id: 'app-builder', icon: Cpu },
   ];
 
   const renderView = () => {
@@ -48,7 +58,6 @@ export default function App() {
       case 'flashloan': return <Flashloan />;
       case 'token-studio': return <TokenStudio />;
       case 'faucet': return <Faucet />;
-      case 'app-builder': return <AppBuilder />;
       default: return <Dashboard />;
     }
   };
@@ -151,22 +160,53 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-2 md:flex">
-              <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
-              <span className="text-sm font-medium text-slate-300">Network Live</span>
-            </div>
-            <button 
-              onClick={connect}
-              className={cn(
-                "flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200",
-                address 
-                  ? "bg-white/10 text-white hover:bg-white/20 border border-white/10" 
-                  : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/25"
+            <div className="hidden items-center gap-2 md:flex">
+              {address && (
+                <button 
+                  onClick={() => switchNetwork(SUPPORTED_CHAINS.BASE_SEPOLIA)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-all",
+                    chainId === SUPPORTED_CHAINS.BASE_SEPOLIA 
+                      ? "border-blue-500/30 bg-blue-500/10 text-blue-400" 
+                      : "border-white/10 bg-black/20 text-slate-300 hover:bg-white/5"
+                  )}
+                >
+                  <div className={cn("h-2 w-2 rounded-full", chainId === SUPPORTED_CHAINS.BASE_SEPOLIA ? "bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]" : "bg-slate-500")}></div>
+                  Base Sepolia
+                </button>
               )}
-            >
-              <Wallet className="h-4 w-4" />
-              {address ? `${address.substring(0, 6)}...${address.substring(address.length - 4)}` : 'Connect Wallet'}
-            </button>
+            </div>
+            
+            {address ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 rounded-full px-4 py-2 bg-white/5 border border-white/10 text-sm font-medium text-white">
+                  <Wallet className="h-4 w-4 text-indigo-400" />
+                  {`${address.substring(0, 6)}...${address.substring(address.length - 4)}`}
+                  <button 
+                    onClick={handleCopyAddress}
+                    className="ml-2 text-slate-400 hover:text-white transition-colors"
+                    title="Copy Address"
+                  >
+                    {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                  </button>
+                </div>
+                <button 
+                  onClick={disconnect}
+                  className="flex items-center justify-center p-2 rounded-full bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-red-500/20 hover:border-red-500/50 transition-all"
+                  title="Switch / Disconnect Wallet"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={connect}
+                className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/25 transition-all duration-200"
+              >
+                <Wallet className="h-4 w-4" />
+                Connect Wallet
+              </button>
+            )}
           </div>
         </header>
 
