@@ -15,26 +15,33 @@ interface IAavePool {
     ) external;
 }
 
-contract FlashLoanArb {
+contract FlashLoanExecutor {
     address public owner;
     IAavePool public pool;
+
+    enum Strategy {
+        Arbitrage,
+        CollateralSwap,
+        Liquidation,
+        Refinance
+    }
 
     constructor(address _pool) {
         owner = msg.sender;
         pool = IAavePool(_pool);
     }
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
-    }
-
-    function startArbitrage(address asset, uint256 amount) external onlyOwner {
+    function executeFlashLoan(
+        address asset,
+        uint256 amount,
+        Strategy strategy,
+        bytes calldata data
+    ) external {
         pool.flashLoanSimple(
             address(this),
             asset,
             amount,
-            "",
+            abi.encode(strategy, data),
             0
         );
     }
@@ -44,22 +51,48 @@ contract FlashLoanArb {
         uint256 amount,
         uint256 premium,
         address,
-        bytes calldata
+        bytes calldata params
     ) external returns (bool) {
+        (Strategy strategy, bytes memory data) =
+            abi.decode(params, (Strategy, bytes));
 
-        // --- Arbitrage Logic Placeholder ---
-        // 1. Swap on DEX A
-        // 2. Swap back on DEX B
+        if (strategy == Strategy.Arbitrage) {
+            _arbitrage(asset, amount, data);
+        } 
+        else if (strategy == Strategy.CollateralSwap) {
+            _collateralSwap(asset, amount, data);
+        }
+        else if (strategy == Strategy.Liquidation) {
+            _liquidation(asset, amount, data);
+        }
+        else if (strategy == Strategy.Refinance) {
+            _refinance(asset, amount, data);
+        }
 
-        uint256 totalDebt = amount + premium;
-
-        // approve repayment
+        uint totalDebt = amount + premium;
         IERC20(asset).approve(address(pool), totalDebt);
 
         return true;
     }
 
-    function withdraw(address token) external onlyOwner {
+    function _arbitrage(address asset, uint amount, bytes memory data) internal {
+        // DEX swaps here
+    }
+
+    function _collateralSwap(address asset, uint amount, bytes memory data) internal {
+        // repay + swap + redeposit
+    }
+
+    function _liquidation(address asset, uint amount, bytes memory data) internal {
+        // call liquidation function
+    }
+
+    function _refinance(address asset, uint amount, bytes memory data) internal {
+        // move loan between protocols
+    }
+
+    function withdraw(address token) external {
+        require(msg.sender == owner, "Not owner");
         uint balance = IERC20(token).balanceOf(address(this));
         IERC20(token).transfer(owner, balance);
     }
@@ -75,7 +108,7 @@ interface IERC20 {
 const input = {
   language: 'Solidity',
   sources: {
-    'FlashLoanArb.sol': {
+    'FlashLoanExecutor.sol': {
       content: source,
     },
   },
@@ -89,10 +122,11 @@ const input = {
 };
 
 const output = JSON.parse(solc.compile(JSON.stringify(input)));
-const contract = output.contracts['FlashLoanArb.sol']['FlashLoanArb'];
+const contract = output.contracts['FlashLoanExecutor.sol']['FlashLoanExecutor'];
 
-fs.writeFileSync('src/lib/FlashLoanArbContract.ts', `
-export const FLASHLOAN_ARB_ABI = ${JSON.stringify(contract.abi, null, 2)};
-export const FLASHLOAN_ARB_BYTECODE = "0x${contract.evm.bytecode.object}";
+fs.writeFileSync('src/lib/FlashLoanExecutorContract.ts', `
+export const FLASHLOAN_EXECUTOR_ABI = ${JSON.stringify(contract.abi, null, 2)};
+export const FLASHLOAN_EXECUTOR_BYTECODE = "0x${contract.evm.bytecode.object}";
 `);
 console.log('Compiled successfully');
+

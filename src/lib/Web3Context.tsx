@@ -95,19 +95,21 @@ export function Web3Provider({ children }: { children: ReactNode }) {
 
   const switchNetwork = async (targetChainId: bigint) => {
     if (!window.ethereum) return;
+    const hexChainId = "0x" + targetChainId.toString(16);
     try {
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: toBeHex(targetChainId) }],
+        params: [{ chainId: hexChainId }],
       });
     } catch (switchError: any) {
-      if (switchError.code === 4902 && targetChainId === SUPPORTED_CHAINS.BASE_SEPOLIA) {
+      console.error('Failed to switch network, attempting to add it:', switchError);
+      if (targetChainId === SUPPORTED_CHAINS.BASE_SEPOLIA) {
         try {
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
             params: [
               {
-                chainId: toBeHex(targetChainId),
+                chainId: hexChainId,
                 chainName: 'Base Sepolia Testnet',
                 rpcUrls: ['https://sepolia.base.org'],
                 nativeCurrency: {
@@ -122,25 +124,57 @@ export function Web3Provider({ children }: { children: ReactNode }) {
         } catch (addError) {
           console.error('Failed to add network:', addError);
         }
-      } else {
-        console.error('Failed to switch network:', switchError);
       }
     }
   };
 
   useEffect(() => {
+    const checkConnection = async () => {
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+          if (accounts.length > 0) {
+            const browserProvider = new BrowserProvider(window.ethereum);
+            const signer = await browserProvider.getSigner();
+            const addr = await signer.getAddress();
+            const network = await browserProvider.getNetwork();
+            
+            setProvider(browserProvider);
+            setAddress(addr);
+            setChainId(network.chainId);
+            
+            await fetchBalances(browserProvider, addr, network.chainId);
+          }
+        } catch (error) {
+          console.error("Auto-connect failed:", error);
+        }
+      }
+    };
+    checkConnection();
+  }, []);
+
+  useEffect(() => {
     if (typeof window.ethereum !== 'undefined') {
-      window.ethereum.on('accountsChanged', (accounts: string[]) => {
+      const handleAccountsChanged = (accounts: string[]) => {
         if (accounts.length === 0) {
           disconnect();
         } else {
           setAddress(accounts[0]);
           if (provider && chainId) fetchBalances(provider, accounts[0], chainId);
         }
-      });
-      window.ethereum.on('chainChanged', () => {
+      };
+
+      const handleChainChanged = () => {
         window.location.reload();
-      });
+      };
+
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+
+      return () => {
+        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
+      };
     }
   }, [provider, chainId]);
 
